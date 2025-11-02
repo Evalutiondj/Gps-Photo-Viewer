@@ -575,6 +575,9 @@ class PhotoGPSViewer:
             return
         current = self.image_list[self.current_index] if self.current_index >= 0 else None
         sort_by = self.sort_var.get()
+
+        # Lưu search query hiện tại
+        current_search = self.search_var.get().lower().strip()
         
         if len(self.image_list) > 50:
             self.list_status.config(text="⏳ Đang sắp xếp...")
@@ -610,9 +613,22 @@ class PhotoGPSViewer:
             # Re-apply filter on sorted list
             temp_filtered = [p for p in self.image_list if p in self.filtered_list]
             self.filtered_list = temp_filtered
-            self.update_listbox(self.filtered_list)
+            
+            # Re-apply search if active
+            if current_search:
+                search_results = [p for p in self.filtered_list 
+                                if current_search in os.path.basename(p).lower()]
+                self.update_listbox(search_results)
+            else:
+                self.update_listbox(self.filtered_list)
         else:
-            self.update_listbox(self.image_list)
+            # Re-apply search if active
+            if current_search:
+                search_results = [p for p in self.image_list 
+                                if current_search in os.path.basename(p).lower()]
+                self.update_listbox(search_results)
+            else:
+                self.update_listbox(self.image_list)
         
         # Restore selection
         if current and current in self.image_list:
@@ -851,36 +867,62 @@ class PhotoGPSViewer:
             webbrowser.open('file://' + os.path.abspath(self.map_file.name))
     
     def prev_image(self):
-        if self.current_index > 0:
-            idx = self.current_index - 1
-            # Find in display list
-            path = self.image_list[idx]
-            if path in self.display_list:
-                display_idx = self.display_list.index(path)
-                self.listbox.selection_clear(0, tk.END)
-                self.listbox.selection_set(display_idx)
-                self.listbox.see(display_idx)
-            self.display_image(idx)
+        if not self.display_list:  # Kiểm tra display_list thay vì image_list
+            return
+        
+        # Tìm vị trí hiện tại trong display_list
+        current_path = self.image_list[self.current_index] if self.current_index >= 0 else None
+        if current_path not in self.display_list:
+            return
+        
+        display_idx = self.display_list.index(current_path)
+        if display_idx > 0:
+            next_path = self.display_list[display_idx - 1]
+            actual_idx = self.image_list.index(next_path)
+            
+            self.listbox.selection_clear(0, tk.END)
+            self.listbox.selection_set(display_idx - 1)
+            self.listbox.see(display_idx - 1)
+            self.display_image(actual_idx)
     
     def next_image(self):
-        if self.current_index < len(self.image_list) - 1:
-            idx = self.current_index + 1
-            # Find in display list
-            path = self.image_list[idx]
-            if path in self.display_list:
-                display_idx = self.display_list.index(path)
-                self.listbox.selection_clear(0, tk.END)
-                self.listbox.selection_set(display_idx)
-                self.listbox.see(display_idx)
-            self.display_image(idx)
+        if not self.display_list:
+            return
+        
+        current_path = self.image_list[self.current_index] if self.current_index >= 0 else None
+        if current_path not in self.display_list:
+            return
+        
+        display_idx = self.display_list.index(current_path)
+        if display_idx < len(self.display_list) - 1:
+            next_path = self.display_list[display_idx + 1]
+            actual_idx = self.image_list.index(next_path)
+            
+            self.listbox.selection_clear(0, tk.END)
+            self.listbox.selection_set(display_idx + 1)
+            self.listbox.see(display_idx + 1)
+            self.display_image(actual_idx)
     
     def update_nav(self):
-        if len(self.image_list) == 0:
+        if not self.display_list:  # Check display_list
             self.prev_btn.config(state='disabled')
             self.next_btn.config(state='disabled')
+            return
+        
+        # Tìm vị trí trong display_list
+        if self.current_index >= 0 and self.current_index < len(self.image_list):
+            current_path = self.image_list[self.current_index]
+            if current_path in self.display_list:
+                display_idx = self.display_list.index(current_path)
+                self.prev_btn.config(state='normal' if display_idx > 0 else 'disabled')
+                self.next_btn.config(state='normal' if display_idx < len(self.display_list) - 1 else 'disabled')
+            else:
+                # Current image không trong display list
+                self.prev_btn.config(state='disabled')
+                self.next_btn.config(state='disabled')
         else:
-            self.prev_btn.config(state='normal' if self.current_index > 0 else 'disabled')
-            self.next_btn.config(state='normal' if self.current_index < len(self.image_list) - 1 else 'disabled')
+            self.prev_btn.config(state='disabled')
+            self.next_btn.config(state='disabled')
     
     def update_list_status(self):
         if self.is_filtered:
@@ -900,7 +942,9 @@ class PhotoGPSViewer:
         if messagebox.askyesno("Xác nhận", f"Xóa {len(self.image_list)} ảnh?"):
             self.image_list.clear()
             self.filtered_list.clear()
+            self.display_list.clear()
             self.is_filtered = False
+            self.search_var.set("")
             self.listbox.delete(0, tk.END)
             self.current_index = -1
             self.current_image_data = None
