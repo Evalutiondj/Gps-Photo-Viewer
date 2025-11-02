@@ -1111,9 +1111,6 @@ class PhotoGPSViewer:
         for cam in sorted(cameras):
             listbox.insert(tk.END, cam)
 
-        # Trong __init__:
-        self.current_filter_camera = None  # ⭐ THÊM
-
         def apply():
             sel = listbox.curselection()
             if sel:
