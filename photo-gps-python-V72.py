@@ -286,6 +286,8 @@ class PhotoGPSViewer:
         self.filtered_list = []  # For search/filter
         self.is_filtered = False
         self.display_list = []  # Current displayed list (for indexing)
+        self.current_filter_type = None  # ⭐ NEW: Store filter type
+        self.current_filter_camera = None  # ⭐ NEW: Store camera filter
         
         self.create_widgets()
         self.setup_drag_drop()
@@ -932,7 +934,23 @@ class PhotoGPSViewer:
     
     def update_status(self):
         if self.current_index >= 0 and self.image_list:
-            self.status_right.config(text=f"Đang xem: {self.current_index + 1}/{len(self.image_list)}")
+            current_path = self.image_list[self.current_index]
+            
+            # ⭐ HIỂN THỊ VỊ TRÍ TRONG DISPLAY LIST
+            if current_path in self.display_list:
+                display_idx = self.display_list.index(current_path)
+                total_display = len(self.display_list)
+                total_full = len(self.image_list)
+                
+                # Nếu có filter/search, hiển thị cả 2 số
+                if self.is_filtered or self.search_var.get().strip():
+                    self.status_right.config(
+                        text=f"Đang xem: {display_idx + 1}/{total_display} (Tổng: {total_full})"
+                    )
+                else:
+                    self.status_right.config(text=f"Đang xem: {display_idx + 1}/{total_display}")
+            else:
+                self.status_right.config(text=f"Đang xem: {self.current_index + 1}/{len(self.image_list)}")
         else:
             self.status_right.config(text="")
     
@@ -1092,11 +1110,15 @@ class PhotoGPSViewer:
         
         for cam in sorted(cameras):
             listbox.insert(tk.END, cam)
-        
+
+        # Trong __init__:
+        self.current_filter_camera = None  # ⭐ THÊM
+
         def apply():
             sel = listbox.curselection()
             if sel:
                 selected_cam = listbox.get(sel[0])
+                self.current_filter_camera = selected_cam
                 self.filtered_list = []
                 for p in self.image_list:
                     if p in self.exif_cache:
