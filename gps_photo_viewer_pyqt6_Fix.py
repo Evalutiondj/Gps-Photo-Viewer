@@ -8,10 +8,9 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                               QLabel, QPushButton, QListWidget, QFrame, QSplitter, QFileDialog,
                               QMessageBox, QLineEdit, QRadioButton, QButtonGroup, QScrollArea,
                               QGroupBox, QGridLayout, QSizePolicy, QGraphicsDropShadowEffect, 
-                              QComboBox)
+                              QComboBox, QInputDialog)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint, QPropertyAnimation, QEasingCurve, QSize
 from PyQt6.QtGui import QPixmap, QImage, QTransform, QFont, QPainter, QColor, QPalette, QIcon, QAction
-from functools import lru_cache
 from collections import OrderedDict
 
 # Import libraries
@@ -446,17 +445,26 @@ class AddressLoader(QThread):
         super().__init__()
         self.lat = lat
         self.lon = lon
+        self._is_running = True  # ✅ Thêm flag
     
     def run(self):
         if not GEOPY_AVAILABLE:
             self.result.emit("⚠️ Chưa cài thư viện geopy")
             return
         try:
+            if not self._is_running:  # ✅ Check trước khi chạy
+                return
             geo = Nominatim(user_agent="geosnap_v2", timeout=10)
             loc = geo.reverse(f"{self.lat}, {self.lon}", language='vi')
-            self.result.emit(loc.address if loc else "❌ Không tìm thấy địa chỉ")
+            if self._is_running:  # ✅ Check trước khi emit
+                self.result.emit(loc.address if loc else "❌ Không tìm thấy địa chỉ")
         except Exception as e:
-            self.result.emit(f"❌ Lỗi: {str(e)[:40]}")
+            if self._is_running:
+                self.result.emit(f"❌ Lỗi: {str(e)[:40]}")
+    
+    def stop(self):
+        """Stop thread gracefully"""
+        self._is_running = False
 
 
 class FluentButton(QPushButton):
@@ -2049,19 +2057,20 @@ QMessageBox QPushButton {
         return f"{size:.1f} TB"
     
     def get_exif(self, path):
-        if path in self.exif_cache:
-            return self.exif_cache[path]
+        cached = self.exif_cache.get(path)
+        if cached is not None:
+            return cached
         
         try:
             if EXIFREAD_AVAILABLE:
                 with open(path, 'rb') as f:
                     tags = exifread.process_file(f, details=False)
-                self.exif_cache[path] = tags
+                self.exif_cache.set(path, tags)
                 return tags
-        except:
-            pass
+        except Exception as e:
+            print(f"EXIF read error for {Path(path).name}: {e}")
         
-        self.exif_cache[path] = {}
+        self.exif_cache.set(path, {})
         return {}
     
     def get_gps_data(self, path):
@@ -2098,12 +2107,10 @@ QMessageBox QPushButton {
                 self.gps_cache[path] = data
                 return data
             except Exception as e:
-                print(f"GPS parsing error for {Path(path).name}: {e}")  # ✅ Log chi tiết
-                self.gps_cache[path] = None
-                return None
-        
-        self.gps_cache.set(path, data)
-        return data
+                print(f"GPS parsing error for {Path(path).name}: {e}")
+                
+        self.gps_cache[path] = None
+        return None
     
     def display_gps(self, gps):
         self.gps_labels['lat'].setText(f"{gps['lat']:.6f}°")
@@ -2167,42 +2174,6 @@ QMessageBox QPushButton {
         else:
             self.camera_labels['focal_length'].setText("--")
     
-    def __init__(self, lat, lon):
-        super().__init__()
-        self.lat = lat
-        self.lon = lon
-        self._is_running = True
-        self.temp_files = []
-
-    def run(self):
-        if not GEOPY_AVAILABLE:
-            self.result.emit("⚠️ Chưa cài thư viện geopy")
-            return
-        try:
-            if not self._is_running:
-                return
-            geo = Nominatim(user_agent="geosnap_v2", timeout=10)
-            loc = geo.reverse(f"{self.lat}, {self.lon}", language='vi')
-            if self._is_running:
-                self.result.emit(loc.address if loc else "❌ Không tìm thấy địa chỉ")
-        except Exception as e:
-            if self._is_running:
-                self.result.emit(f"❌ Lỗi: {str(e)[:40]}")
-
-    def stop(self):
-        self._is_running = False
-
-    def load_address_async(self, lat, lon):
-        self.addr_label.setText("🔄 Đang tải địa chỉ...")
-        
-        if self.address_loader and self.address_loader.isRunning():
-            self.address_loader.stop()
-            self.address_loader.wait(1000)
-        
-        self.address_loader = AddressLoader(lat, lon)
-        self.address_loader.result.connect(self.addr_label.setText)
-        self.address_loader.start()
-    
     def open_google_maps(self):
         if self.current_gps:
             webbrowser.open(
@@ -2254,20 +2225,6 @@ QMessageBox QPushButton {
             
         except Exception as e:
             QMessageBox.warning(self, "Lỗi", f"Không thể tạo bản đồ:\n{str(e)}")
-    
-    def closeEvent(self, event):
-        if self.address_loader and self.address_loader.isRunning():
-            self.address_loader.stop()
-            self.address_loader.wait(2000)
-        
-        for temp_file in self.temp_files:
-            try:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-            except:
-                pass
-        
-        event.accept()
 
     def show_all_on_map(self):
         if not FOLIUM_AVAILABLE:
@@ -2349,6 +2306,7 @@ QMessageBox QPushButton {
             m.save(temp_file.name)
             temp_file.close()
             
+            self.temp_files.append(temp_file.name)
             webbrowser.open('file://' + os.path.abspath(temp_file.name))
             
             # Removed success message dialog
@@ -2439,6 +2397,20 @@ QMessageBox QPushButton {
             self.update_list_status()
             self.update_nav()
     
+    def closeEvent(self, event):
+            if self.address_loader and self.address_loader.isRunning():
+                self.address_loader.stop()
+                self.address_loader.wait(2000)
+            
+            for temp_file in self.temp_files:
+                try:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                except:
+                    pass
+            
+            event.accept()
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Left:
             self.prev_image()
